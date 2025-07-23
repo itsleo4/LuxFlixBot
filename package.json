@@ -1,0 +1,17 @@
+{
+  "name": "luxflixbot",
+  "version": "1.0.0",
+  "description": "Telegram bot for LuxFlix",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
