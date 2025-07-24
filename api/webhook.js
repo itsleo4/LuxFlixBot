@@ -3,7 +3,29 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Busboy = require('busboy');
 const stream = require('stream');
-const path = require('path'); // Node.js path module for file extensions
+const path = require('path');
+
+// Firebase Admin SDK setup
+const admin = require('firebase-admin');
+
+// Initialize Firebase Admin SDK if not already initialized
+// This uses the service account key stored as an environment variable in Vercel
+if (!admin.apps.length) {
+    try {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_ADMIN_SDK_CONFIG);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            // You might need to add your databaseURL if using Realtime Database
+            // databaseURL: "https://YOUR_PROJECT_ID.firebaseio.com" // Uncomment and set if needed
+        });
+        console.log('[INFO] Firebase Admin SDK initialized successfully.');
+    } catch (error) {
+        console.error('[ERROR] Failed to initialize Firebase Admin SDK:', error.message);
+        // Exit process or handle error appropriately
+    }
+}
+
+const db = admin.firestore(); // Get Firestore instance
 
 // Access the bot token and admin chat ID from Vercel's environment variables
 const token = process.env.bottken;
@@ -13,7 +35,6 @@ const bot = new TelegramBot(token);
 
 // Function to send a photo to Telegram from a buffer
 async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename, reply_markup = {}) {
-    // Determine a more reliable content type if the provided one is generic or undefined
     let effectiveMimeType = mimeType;
     if (!effectiveMimeType || effectiveMimeType === 'application/octet-stream') {
         const ext = path.extname(filename || '').toLowerCase(); // Ensure filename is a string for path.extname
@@ -38,7 +59,6 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
     try {
         return await bot.sendPhoto(chatId, photoBuffer, { caption: caption, reply_markup: reply_markup }, fileOptions);
     } catch (error) {
-        // Log the specific error from Telegram API during photo sending
         console.error(`[ERROR] Telegram sendPhoto failed:`, error.response ? error.response.body : error.message);
         throw error; // Re-throw to be caught by the main try/catch
     }
@@ -79,28 +99,69 @@ module.exports = async (req, res) => {
                 const firstName = msg.from.first_name || 'N/A';
                 const lastName = msg.from.last_name || 'N/A';
 
-                let messageToAdmin = `LuxFlix Payment Proof from ${userName} (Name: ${firstName} ${lastName})\n`;
+                // --- NEW: Handle /free and /pro video upload commands (HIGHEST PRIORITY) ---
+                if (msg.text && (msg.text.startsWith('/free') || msg.text.startsWith('/pro'))) {
+                    const lines = msg.text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+                    let title = '';
+                    let embedCode = '';
+                    let thumbnailUrl = '';
+                    const videoType = msg.text.startsWith('/free') ? 'free' : 'pro';
 
-                if (msg.text) {
-                    messageToAdmin += `User Message: "${msg.text}"`;
-                    try {
-                        await bot.sendMessage(adminChatId, messageToAdmin);
-                        await bot.sendMessage(chatId, 'Thank you for submitting your payment proof! We will verify it soon and update your membership.');
-                        console.log(`[SUCCESS] Telegram text message processed from ${userName} in chat ${chatId}`);
-                    } catch (error) {
-                        console.error(`[ERROR] Telegram text message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
+                    for (const line of lines) {
+                        if (line.toLowerCase().startsWith('title:')) {
+                            title = line.substring('title:'.length).trim();
+                        } else if (line.toLowerCase().startsWith('video:')) {
+                            embedCode = line.substring('video:'.length).trim();
+                        } else if (line.toLowerCase().startsWith('thumb:')) {
+                            thumbnailUrl = line.substring('thumb:'.length).trim();
+                        }
                     }
-                } else if (msg.photo) {
-                    const fileId = msg.photo[msg.photo.length - 1].file_id;
-                    const caption = msg.caption ? `\nCaption: "${msg.caption}"` : '';
-                    messageToAdmin += ` (Photo Proof)${caption}`;
 
-                    try {
-                        await bot.sendPhoto(adminChatId, fileId, { caption: messageToAdmin });
-                        await bot.sendMessage(chatId, 'Thank you for submitting your payment proof! We will verify it soon and update your membership.');
-                        console.log(`[SUCCESS] Telegram photo message processed from ${userName} in chat ${chatId}`);
-                    } catch (error) {
-                        console.error(`[ERROR] Telegram photo message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
+                    if (title && embedCode && thumbnailUrl) {
+                        try {
+                            await db.collection('videos').add({
+                                title,
+                                embedCode,
+                                thumbnailUrl,
+                                type: videoType,
+                                timestamp: admin.firestore.FieldValue.serverTimestamp() // Firestore timestamp
+                            });
+                            await bot.sendMessage(chatId, `Video "${title}" (${videoType}) uploaded successfully!`);
+                            console.log(`[SUCCESS] Video uploaded: ${title} (${videoType})`);
+                        } catch (error) {
+                            console.error(`[ERROR] Failed to upload video to Firestore:`, error.message);
+                            await bot.sendMessage(chatId, `Failed to upload video: ${error.message}`);
+                        }
+                    } else {
+                        await bot.sendMessage(chatId, 'Please provide title, video embed code, and thumbnail URL in the format:\n\n/free (or /pro)\ntitle: Your Video Title\nvideo: <iframe src="..."></iframe>\nthumb: https://example.com/thumbnail.jpg');
+                    }
+                } 
+                // --- Existing Telegram general message handling (if not a video command) ---
+                else if (msg.text || msg.photo) { // This handles any other text or photo messages from Telegram users
+                    let messageToAdmin = `--- New Message from Telegram User ---\n`;
+                    messageToAdmin += `User: ${userName} (Name: ${firstName} ${lastName})\n`;
+
+                    if (msg.text) {
+                        messageToAdmin += `Message: "${msg.text}"`;
+                        try {
+                            await bot.sendMessage(adminChatId, messageToAdmin);
+                            // No automatic user reply for general messages to avoid spam/confusion
+                            console.log(`[SUCCESS] Telegram general text message processed from ${userName} in chat ${chatId}`);
+                        } catch (error) {
+                            console.error(`[ERROR] Telegram general text message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
+                        }
+                    } else if (msg.photo) {
+                        const fileId = msg.photo[msg.photo.length - 1].file_id;
+                        const caption = msg.caption ? `\nCaption: "${msg.caption}"` : '';
+                        messageToAdmin += ` (Photo Message)${caption}`;
+
+                        try {
+                            await bot.sendPhoto(adminChatId, fileId, { caption: messageToAdmin });
+                            // No automatic user reply for general messages
+                            console.log(`[SUCCESS] Telegram general photo message processed from ${userName} in chat ${chatId}`);
+                        } catch (error) {
+                            console.error(`[ERROR] Telegram general photo message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
+                        }
                     }
                 }
             } else if (body.callback_query) {
@@ -119,10 +180,24 @@ module.exports = async (req, res) => {
                 let responseMessage = '';
                 if (action === 'APPROVE') {
                     responseMessage = `✅ Approved membership for UID: ${uid} (Plan: ${plan})`;
-                    // TODO: Add Firebase Admin SDK logic here to update user's membership
+                    try {
+                        await admin.auth().setCustomUserClaims(uid, { isPro: true, membershipPlan: plan });
+                        responseMessage += `\nUser ${uid} marked as PRO in Firebase.`;
+                        console.log(`[SUCCESS] User ${uid} set as PRO with plan ${plan}`);
+                    } catch (error) {
+                        responseMessage += `\n[ERROR] Failed to set PRO claim for user ${uid}: ${error.message}`;
+                        console.error(`[ERROR] Failed to set PRO claim for user ${uid}:`, error.message);
+                    }
                 } else if (action === 'REJECT') {
                     responseMessage = `❌ Rejected membership for UID: ${uid} (Plan: ${plan})`;
-                    // TODO: Add Firebase Admin SDK logic here to update user's membership (or notify them)
+                    try {
+                        await admin.auth().setCustomUserClaims(uid, { isPro: false, membershipPlan: null });
+                        responseMessage += `\nUser ${uid} marked as NON-PRO in Firebase.`;
+                        console.log(`[SUCCESS] User ${uid} set as NON-PRO`);
+                    } catch (error) {
+                        responseMessage += `\n[ERROR] Failed to remove PRO claim for user ${uid}: ${error.message}`;
+                        console.error(`[ERROR] Failed to remove PRO claim for user ${uid}:`, error.message);
+                    }
                 } else {
                     responseMessage = `Unknown action: ${action}`;
                 }
@@ -144,7 +219,6 @@ module.exports = async (req, res) => {
 
         const busboyPromise = new Promise((resolve, reject) => {
             busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
-                // FIX: Ensure filename and mimetype are explicitly converted to strings
                 originalFilename = String(filename);
                 fileMimeType = String(mimetype);
 
@@ -199,7 +273,7 @@ module.exports = async (req, res) => {
 
             console.log(`[DEBUG] Attempting to send photo. fileBuffer exists: ${!!fileBuffer}, fileMimeType: "${fileMimeType}", originalFilename: "${originalFilename}"`);
 
-            if (fileBuffer && fileMimeType && fileBuffer.length > 0) { // Ensure buffer is not empty
+            if (fileBuffer && fileMimeType && fileBuffer.length > 0) {
                 await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename, inlineKeyboard);
                 console.log(`[SUCCESS] Website payment proof (photo with buttons) sent to admin for UID: ${user_firebase_uid}`);
             } else {
