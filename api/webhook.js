@@ -11,9 +11,9 @@ const adminChatId = process.env.adminchatid;
 const bot = new TelegramBot(token);
 
 // Function to send a photo to Telegram from a buffer
-async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType) {
+async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename) {
     const fileOptions = {
-        filename: 'payment_proof.png', // Default filename
+        filename: filename || 'payment_proof.png', // Use original filename or default
         contentType: mimeType || 'image/png' // Use provided mimeType or default
     };
     return bot.sendPhoto(chatId, photoBuffer, { caption: caption }, fileOptions);
@@ -28,12 +28,25 @@ export const config = {
 };
 
 module.exports = async (req, res) => {
+    // --- CORS Headers ---
+    // Allow requests from your GitHub Pages domain
+    res.setHeader('Access-Control-Allow-Origin', 'https://itsleo4.github.io');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS'); // Allow POST and OPTIONS methods
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); // Allow Content-Type header
+
+    // Handle preflight OPTIONS request (sent by browser before actual POST for CORS)
+    if (req.method === 'OPTIONS') {
+        console.log('[INFO] Received OPTIONS (CORS preflight) request.');
+        res.status(200).end(); // Respond with 200 OK for preflight
+        return;
+    }
+
     console.log(`Incoming request method: ${req.method}`);
     console.log(`Incoming request Content-Type: ${req.headers['content-type']}`);
 
     // --- Handle Telegram Webhook Updates (application/json) ---
     if (req.method === 'POST' && req.headers['content-type'] && req.headers['content-type'].startsWith('application/json')) {
-        const { body } = req; // Vercel will parse JSON automatically if bodyParser is not false for this route
+        const { body } = req; 
 
         if (body && body.update_id) { // This is a Telegram update
             if (body.message) {
@@ -84,8 +97,6 @@ module.exports = async (req, res) => {
     else if (req.method === 'POST' && req.headers['content-type'] && req.headers['content-type'].startsWith('multipart/form-data')) {
         console.log('[INFO] Received multipart/form-data from website.');
 
-        // Ensure the request is piped to Busboy correctly
-        // Vercel's `req` object is already a ReadableStream
         const busboy = Busboy({ headers: req.headers });
         const fields = {};
         let fileBuffer = null;
@@ -131,32 +142,24 @@ module.exports = async (req, res) => {
 
             try {
                 if (fileBuffer && fileMimeType) {
-                    // Send photo with caption and buttons
-                    await bot.sendPhoto(adminChatId, fileBuffer, {
-                        caption: messageToAdmin,
-                        reply_markup: inlineKeyboard
-                    }, {
-                        filename: originalFilename || 'payment_proof.png',
-                        contentType: fileMimeType
-                    });
+                    await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename);
                     console.log(`[SUCCESS] Website payment proof (photo) sent to admin for UID: ${user_firebase_uid}`);
                 } else {
-                    // Send text message with buttons if no photo
-                    await bot.sendMessage(adminChatId, messageToAdmin, { reply_markup: inlineKeyboard });
+                    await bot.sendMessage(adminChatId, messageToAdmin); // Send as text if no photo
                     console.log(`[SUCCESS] Website payment proof (text-only) sent to admin for UID: ${user_firebase_uid}`);
                 }
 
-                // Send success response back to the website
+                // Send the message with inline keyboard to admin
+                // This is sent separately if a photo was sent above, or as the main message if no photo.
+                await bot.sendMessage(adminChatId, 'Action:', { reply_markup: inlineKeyboard });
+
                 res.status(200).json({ success: true, message: 'Payment proof received and forwarded.' });
             } catch (error) {
                 console.error(`[ERROR] Failed to send payment proof to admin for UID ${user_firebase_uid}:`, error.response ? error.response.body : error.message);
-                // Send error response back to the website
                 res.status(500).json({ success: false, message: 'Failed to process payment proof.' });
             }
         });
 
-        // Ensure the request stream is piped to busboy
-        // Vercel's `req` object is already a ReadableStream, so direct pipe should work.
         req.pipe(busboy);
     }
     // --- Handle other methods (e.g., GET requests to the root webhook URL) ---
