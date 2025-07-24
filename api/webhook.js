@@ -1,5 +1,7 @@
 // api/webhook.js
 
+console.log('[ULTIMATE_DIAGNOSTIC] Function execution started.'); // THIS IS THE KEY DIAGNOSTIC LINE
+
 const TelegramBot = require('node-telegram-bot-api');
 const Busboy = require('busboy');
 const stream = require('stream');
