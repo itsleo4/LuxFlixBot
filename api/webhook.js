@@ -3,6 +3,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const Busboy = require('busboy'); // For parsing multipart/form-data
 const stream = require('stream'); // Node.js stream module
+const path = require('path'); // Node.js path module for file extensions
 
 // Access the bot token and admin chat ID from Vercel's environment variables
 const token = process.env.bottken;
@@ -12,9 +13,26 @@ const bot = new TelegramBot(token);
 
 // Function to send a photo to Telegram from a buffer
 async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename, reply_markup = {}) {
+    // Determine a more reliable content type if the provided one is generic or undefined
+    let effectiveMimeType = mimeType;
+    if (!effectiveMimeType || effectiveMimeType === 'application/octet-stream') {
+        const ext = path.extname(filename).toLowerCase();
+        if (ext === '.png') {
+            effectiveMimeType = 'image/png';
+        } else if (ext === '.jpg' || ext === '.jpeg') {
+            effectiveMectiveMimeType = 'image/jpeg';
+        } else if (ext === '.gif') {
+            effectiveMimeType = 'image/gif';
+        } else {
+            effectiveMimeType = 'application/octet-stream'; // Fallback for unknown
+        }
+    }
+
+    console.log(`[DEBUG] Sending photo: filename=${filename}, effectiveMimeType=${effectiveMimeType}, bufferLength=${photoBuffer ? photoBuffer.length : 'null'}`);
+
     const fileOptions = {
         filename: filename || 'payment_proof.png',
-        contentType: mimeType || 'image/png' // Fallback to image/png if mimetype is undefined
+        contentType: effectiveMimeType
     };
     return bot.sendPhoto(chatId, photoBuffer, { caption: caption, reply_markup: reply_markup }, fileOptions);
 }
@@ -122,11 +140,12 @@ module.exports = async (req, res) => {
             busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
                 console.log(`[INFO] File received: ${fieldname} - ${filename} (${mimetype})`);
                 originalFilename = filename;
-                fileMimeType = mimetype;
+                fileMimeType = mimetype; // Capture the mimetype here
                 const chunks = [];
                 file.on('data', chunk => chunks.push(chunk));
                 file.on('end', () => {
                     fileBuffer = Buffer.concat(chunks);
+                    console.log(`[DEBUG] File buffer collected. Length: ${fileBuffer.length} bytes.`);
                 });
                 file.on('error', reject); // Handle file stream errors
             });
@@ -155,7 +174,7 @@ module.exports = async (req, res) => {
             messageToAdmin += `Firebase Email: ${user_email || 'N/A'}\n`;
             messageToAdmin += `Membership Plan: ${membership_plan || 'N/A'}\n`;
             messageToAdmin += `Payment Method: ${payment_method || 'N/A'}\n`;
-            messageToAdmin += `Amount Paid: ${selected_currency || 'N/A'} ${selected_price || 'N/A'}\n`; // Include amount and currency
+            messageToAdmin += `Amount Paid: ${selected_currency || 'N/A'} ${selected_price || 'N/A'}\n`;
             messageToAdmin += `Ref ID / Details: ${refID || 'N/A'}\n`;
 
             const approveData = `APPROVE_${user_firebase_uid}_${membership_plan}`;
@@ -170,17 +189,22 @@ module.exports = async (req, res) => {
                 ]
             };
 
+            // Log file details right before attempting to send the photo
+            console.log(`[DEBUG] Attempting to send photo. fileBuffer exists: ${!!fileBuffer}, fileMimeType: ${fileMimeType}, originalFilename: ${originalFilename}`);
+
             if (fileBuffer && fileMimeType) {
                 await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename, inlineKeyboard);
                 console.log(`[SUCCESS] Website payment proof (photo with buttons) sent to admin for UID: ${user_firebase_uid}`);
             } else {
+                // If no file or mimetype, send text message with a note about missing screenshot
+                messageToAdmin += `\n(Note: Screenshot not received or could not be processed.)`;
                 await bot.sendMessage(adminChatId, messageToAdmin, { reply_markup: inlineKeyboard });
-                console.log(`[SUCCESS] Website payment proof (text-only with buttons) sent to admin for UID: ${user_firebase_uid}`);
+                console.log(`[SUCCESS] Website payment proof (text-only with buttons) sent to admin for UID: ${user_firebase_uid} (Screenshot missing)`);
             }
 
             res.status(200).json({ success: true, message: 'Payment proof received and forwarded.' });
         } catch (error) {
-            console.error(`[ERROR] Failed to process payment proof from website for UID ${user_firebase_uid}:`, error.message, error.stack);
+            console.error(`[ERROR] Failed to process payment proof from website for UID ${fields.user_firebase_uid || 'N/A'}:`, error.message, error.stack);
             res.status(500).json({ success: false, message: 'Failed to process payment proof.' });
         }
     }
