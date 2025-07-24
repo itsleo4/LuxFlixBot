@@ -1,8 +1,8 @@
 // api/webhook.js
 
 const TelegramBot = require('node-telegram-bot-api');
-const Busboy = require('busboy'); // For parsing multipart/form-data
-const stream = require('stream'); // Node.js stream module
+const Busboy = require('busboy');
+const stream = require('stream');
 const path = require('path'); // Node.js path module for file extensions
 
 // Access the bot token and admin chat ID from Vercel's environment variables
@@ -16,11 +16,11 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
     // Determine a more reliable content type if the provided one is generic or undefined
     let effectiveMimeType = mimeType;
     if (!effectiveMimeType || effectiveMimeType === 'application/octet-stream') {
-        const ext = path.extname(filename).toLowerCase();
+        const ext = path.extname(filename || '').toLowerCase(); // Ensure filename is a string for path.extname
         if (ext === '.png') {
             effectiveMimeType = 'image/png';
         } else if (ext === '.jpg' || ext === '.jpeg') {
-            effectiveMectiveMimeType = 'image/jpeg';
+            effectiveMimeType = 'image/jpeg';
         } else if (ext === '.gif') {
             effectiveMimeType = 'image/gif';
         } else {
@@ -34,7 +34,14 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
         filename: filename || 'payment_proof.png',
         contentType: effectiveMimeType
     };
-    return bot.sendPhoto(chatId, photoBuffer, { caption: caption, reply_markup: reply_markup }, fileOptions);
+
+    try {
+        return await bot.sendPhoto(chatId, photoBuffer, { caption: caption, reply_markup: reply_markup }, fileOptions);
+    } catch (error) {
+        // Log the specific error from Telegram API during photo sending
+        console.error(`[ERROR] Telegram sendPhoto failed:`, error.response ? error.response.body : error.message);
+        throw error; // Re-throw to be caught by the main try/catch
+    }
 }
 
 // Vercel's specific configuration to ensure raw body is available for busboy
@@ -135,19 +142,21 @@ module.exports = async (req, res) => {
         let fileMimeType = null;
         let originalFilename = null;
 
-        // Use a promise to ensure busboy finishes before proceeding
         const busboyPromise = new Promise((resolve, reject) => {
             busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
-                console.log(`[INFO] File received: ${fieldname} - ${filename} (${mimetype})`);
-                originalFilename = filename;
-                fileMimeType = mimetype; // Capture the mimetype here
+                // FIX: Ensure filename and mimetype are explicitly converted to strings
+                originalFilename = String(filename);
+                fileMimeType = String(mimetype);
+
+                console.log(`[INFO] File received: ${fieldname} - Filename: "${originalFilename}" (MimeType: ${fileMimeType})`);
+                
                 const chunks = [];
                 file.on('data', chunk => chunks.push(chunk));
                 file.on('end', () => {
                     fileBuffer = Buffer.concat(chunks);
                     console.log(`[DEBUG] File buffer collected. Length: ${fileBuffer.length} bytes.`);
                 });
-                file.on('error', reject); // Handle file stream errors
+                file.on('error', reject);
             });
 
             busboy.on('field', (fieldname, val, fieldnameTruncated, valTruncated, encoding, mimetype) => {
@@ -155,15 +164,14 @@ module.exports = async (req, res) => {
                 fields[fieldname] = val;
             });
 
-            busboy.on('finish', resolve); // Resolve the promise when busboy finishes
-            busboy.on('error', reject); // Handle busboy parsing errors
+            busboy.on('finish', resolve);
+            busboy.on('error', reject);
         });
 
-        // Pipe the request to busboy
         req.pipe(busboy);
 
         try {
-            await busboyPromise; // Wait for busboy to finish parsing all fields and files
+            await busboyPromise;
             console.log('[INFO] Busboy finished parsing form data (after awaiting promise).');
 
             const { name, refID, user_firebase_uid, user_email, membership_plan, payment_method, selected_price, selected_currency } = fields;
@@ -189,15 +197,13 @@ module.exports = async (req, res) => {
                 ]
             };
 
-            // Log file details right before attempting to send the photo
-            console.log(`[DEBUG] Attempting to send photo. fileBuffer exists: ${!!fileBuffer}, fileMimeType: ${fileMimeType}, originalFilename: ${originalFilename}`);
+            console.log(`[DEBUG] Attempting to send photo. fileBuffer exists: ${!!fileBuffer}, fileMimeType: "${fileMimeType}", originalFilename: "${originalFilename}"`);
 
-            if (fileBuffer && fileMimeType) {
+            if (fileBuffer && fileMimeType && fileBuffer.length > 0) { // Ensure buffer is not empty
                 await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename, inlineKeyboard);
                 console.log(`[SUCCESS] Website payment proof (photo with buttons) sent to admin for UID: ${user_firebase_uid}`);
             } else {
-                // If no file or mimetype, send text message with a note about missing screenshot
-                messageToAdmin += `\n(Note: Screenshot not received or could not be processed.)`;
+                messageToAdmin += `\n(Note: Screenshot not received or could not be processed. Buffer empty or mimetype missing.)`;
                 await bot.sendMessage(adminChatId, messageToAdmin, { reply_markup: inlineKeyboard });
                 console.log(`[SUCCESS] Website payment proof (text-only with buttons) sent to admin for UID: ${user_firebase_uid} (Screenshot missing)`);
             }
