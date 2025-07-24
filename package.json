@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/itsleo4/LuxFlixBot#readme",
   "dependencies": {
+    "busboy": "^1.6.0",
     "dotenv": "^17.2.0",
     "node-telegram-bot-api": "^0.66.0"
   }
