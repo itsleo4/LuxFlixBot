@@ -5,10 +5,24 @@ const Busboy = require('busboy');
 const stream = require('stream');
 const path = require('path');
 
-// Removed Firebase Admin SDK setup for now to isolate the issue.
-// const admin = require('firebase-admin');
-// if (!admin.apps.length) { ... }
-// const db = admin.firestore(); // Also removed
+// Firebase Admin SDK setup - Reintroduced for custom claims
+const admin = require('firebase-admin');
+
+// Initialize Firebase Admin SDK if not already initialized
+if (!admin.apps.length) {
+    try {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_ADMIN_SDK_CONFIG);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            // No databaseURL needed if only using Auth and not Firestore directly here
+        });
+        console.log('[INFO] Firebase Admin SDK initialized for Auth claims.');
+    } catch (error) {
+        console.error('[ERROR] Failed to initialize Firebase Admin SDK for Auth claims:', error.message);
+        // If this fails, custom claims won't be set, but the function should still process
+        // other requests. Log the error but don't crash the function.
+    }
+}
 
 // Access the bot token and admin chat ID from Vercel's environment variables
 const token = process.env.bottken;
@@ -25,8 +39,6 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
             effectiveMimeType = 'image/png';
         } else if (ext === '.jpg' || ext === '.jpeg') {
             effectiveMimeType = 'image/jpeg';
-        } else if (ext === '.gif') {
-            effectiveMimeType = 'image/gif';
         } else {
             effectiveMimeType = 'application/octet-stream';
         }
@@ -122,12 +134,37 @@ module.exports = async (req, res) => {
                 let responseMessage = '';
                 if (action === 'APPROVE') {
                     responseMessage = `✅ Approved membership for UID: ${uid} (Plan: ${plan})`;
-                    // Removed Firebase Admin SDK call here
-                    responseMessage += `\n(Admin SDK not active for custom claims)`;
+                    // Reintroduced Firebase Admin SDK call here
+                    try {
+                        // Ensure admin is initialized before calling auth()
+                        if (admin.apps.length > 0) {
+                            await admin.auth().setCustomUserClaims(uid, { isPro: true, membershipPlan: plan });
+                            responseMessage += `\nUser ${uid} marked as PRO in Firebase.`;
+                            console.log(`[SUCCESS] User ${uid} set as PRO with plan ${plan}`);
+                        } else {
+                            responseMessage += `\n[WARNING] Firebase Admin SDK not initialized, cannot set PRO claim.`;
+                            console.warn(`[WARNING] Firebase Admin SDK not initialized for setting custom claims.`);
+                        }
+                    } catch (error) {
+                        responseMessage += `\n[ERROR] Failed to set PRO claim for user ${uid}: ${error.message}`;
+                        console.error(`[ERROR] Failed to set PRO claim for user ${uid}:`, error.message);
+                    }
                 } else if (action === 'REJECT') {
                     responseMessage = `❌ Rejected membership for UID: ${uid} (Plan: ${plan})`;
-                    // Removed Firebase Admin SDK call here
-                    responseMessage += `\n(Admin SDK not active for custom claims)`;
+                    // Reintroduced Firebase Admin SDK call here
+                    try {
+                        if (admin.apps.length > 0) {
+                            await admin.auth().setCustomUserClaims(uid, { isPro: false, membershipPlan: null }); // Remove pro status
+                            responseMessage += `\nUser ${uid} marked as NON-PRO in Firebase.`;
+                            console.log(`[SUCCESS] User ${uid} set as NON-PRO`);
+                        } else {
+                            responseMessage += `\n[WARNING] Firebase Admin SDK not initialized, cannot remove PRO claim.`;
+                            console.warn(`[WARNING] Firebase Admin SDK not initialized for removing custom claims.`);
+                        }
+                    } catch (error) {
+                        responseMessage += `\n[ERROR] Failed to remove PRO claim for user ${uid}: ${error.message}`;
+                        console.error(`[ERROR] Failed to remove PRO claim for user ${uid}:`, error.message);
+                    }
                 } else {
                     responseMessage = `Unknown action: ${action}`;
                 }
