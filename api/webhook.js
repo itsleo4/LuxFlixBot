@@ -5,7 +5,7 @@ const Busboy = require('busboy');
 const stream = require('stream');
 const path = require('path');
 
-// Firebase Admin SDK setup - Reintroduced for custom claims
+// Firebase Admin SDK setup - RESTORED for custom claims
 const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -14,13 +14,13 @@ if (!admin.apps.length) {
         const serviceAccount = JSON.parse(process.env.FIREBASE_ADMIN_SDK_CONFIG);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
-            // No databaseURL needed if only using Auth and not Firestore directly here
+            // No databaseURL needed if only using Auth. If you add Firestore later, you might need it.
         });
         console.log('[INFO] Firebase Admin SDK initialized for Auth claims.');
     } catch (error) {
         console.error('[ERROR] Failed to initialize Firebase Admin SDK for Auth claims:', error.message);
-        // If this fails, custom claims won't be set, but the function should still process
-        // other requests. Log the error but don't crash the function.
+        // This error will be logged, but the function should still proceed to process other requests.
+        // Custom claims won't be set if this initialization fails.
     }
 }
 
@@ -39,6 +39,8 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
             effectiveMimeType = 'image/png';
         } else if (ext === '.jpg' || ext === '.jpeg') {
             effectiveMimeType = 'image/jpeg';
+        } else if (ext === '.gif') {
+            effectiveMimeType = 'image/gif';
         } else {
             effectiveMimeType = 'application/octet-stream';
         }
@@ -94,7 +96,7 @@ module.exports = async (req, res) => {
                 const firstName = msg.from.first_name || 'N/A';
                 const lastName = msg.from.last_name || 'N/A';
 
-                // --- Existing Telegram general message handling (any message from Telegram user) ---
+                // --- General Telegram message handling (any message from Telegram user) ---
                 let messageToAdmin = `--- New Message from Telegram User ---\n`;
                 messageToAdmin += `User: ${userName} (Name: ${firstName} ${lastName})\n`;
 
@@ -136,7 +138,7 @@ module.exports = async (req, res) => {
                     responseMessage = `✅ Approved membership for UID: ${uid} (Plan: ${plan})`;
                     // Reintroduced Firebase Admin SDK call here
                     try {
-                        // Ensure admin is initialized before calling auth()
+                        // Check if admin is initialized before attempting to set claims
                         if (admin.apps.length > 0) {
                             await admin.auth().setCustomUserClaims(uid, { isPro: true, membershipPlan: plan });
                             responseMessage += `\nUser ${uid} marked as PRO in Firebase.`;
