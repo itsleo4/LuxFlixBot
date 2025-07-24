@@ -47,8 +47,6 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
             effectiveMimeType = 'image/png';
         } else if (ext === '.jpg' || ext === '.jpeg') {
             effectiveMimeType = 'image/jpeg';
-        } else if (ext === '.gif') {
-            effectiveMimeType = 'image/gif';
         } else {
             effectiveMimeType = 'application/octet-stream';
         }
