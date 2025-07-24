@@ -11,7 +11,6 @@ const adminChatId = process.env.adminchatid;
 const bot = new TelegramBot(token);
 
 // Function to send a photo to Telegram from a buffer
-// Added reply_markup directly to sendPhoto options for cleaner message with buttons
 async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename, reply_markup = {}) {
     const fileOptions = {
         filename: filename || 'payment_proof.png',
@@ -82,16 +81,15 @@ module.exports = async (req, res) => {
             } else if (body.callback_query) {
                 const callbackQuery = body.callback_query;
                 const message = callbackQuery.message;
-                const data = callbackQuery.data; // This is the string from the button
+                const data = callbackQuery.data;
 
                 console.log(`[INFO] Callback query received: ${data}`);
-                await bot.answerCallbackQuery(callbackQuery.id); // Acknowledge the callback
+                await bot.answerCallbackQuery(callbackQuery.id);
 
-                // FIX: Parse the data using split('_') instead of JSON.parse()
                 const parts = data.split('_');
                 const action = parts[0];
                 const uid = parts[1];
-                const plan = parts.length > 2 ? parts.slice(2).join('_') : 'N/A'; // Handle multi-word plans
+                const plan = parts.length > 2 ? parts.slice(2).join('_') : 'N/A';
 
                 let responseMessage = '';
                 if (action === 'APPROVE') {
@@ -119,25 +117,37 @@ module.exports = async (req, res) => {
         let fileMimeType = null;
         let originalFilename = null;
 
-        busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
-            console.log(`[INFO] File received: ${fieldname} - ${filename} (${mimetype})`);
-            originalFilename = filename;
-            fileMimeType = mimetype; // Capture the mimetype here
-            const chunks = [];
-            file.on('data', chunk => chunks.push(chunk));
-            file.on('end', () => {
-                fileBuffer = Buffer.concat(chunks);
+        // Use a promise to ensure busboy finishes before proceeding
+        const busboyPromise = new Promise((resolve, reject) => {
+            busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
+                console.log(`[INFO] File received: ${fieldname} - ${filename} (${mimetype})`);
+                originalFilename = filename;
+                fileMimeType = mimetype;
+                const chunks = [];
+                file.on('data', chunk => chunks.push(chunk));
+                file.on('end', () => {
+                    fileBuffer = Buffer.concat(chunks);
+                });
+                file.on('error', reject); // Handle file stream errors
             });
+
+            busboy.on('field', (fieldname, val, fieldnameTruncated, valTruncated, encoding, mimetype) => {
+                console.log(`[INFO] Field received: ${fieldname} = ${val}`);
+                fields[fieldname] = val;
+            });
+
+            busboy.on('finish', resolve); // Resolve the promise when busboy finishes
+            busboy.on('error', reject); // Handle busboy parsing errors
         });
 
-        busboy.on('field', (fieldname, val, fieldnameTruncated, valTruncated, encoding, mimetype) => {
-            console.log(`[INFO] Field received: ${fieldname} = ${val}`);
-            fields[fieldname] = val;
-        });
+        // Pipe the request to busboy
+        req.pipe(busboy);
 
-        busboy.on('finish', async () => {
-            console.log('[INFO] Busboy finished parsing form data.');
-            const { name, refID, user_firebase_uid, user_email, membership_plan, payment_method } = fields;
+        try {
+            await busboyPromise; // Wait for busboy to finish parsing all fields and files
+            console.log('[INFO] Busboy finished parsing form data (after awaiting promise).');
+
+            const { name, refID, user_firebase_uid, user_email, membership_plan, payment_method, selected_price, selected_currency } = fields;
 
             let messageToAdmin = `--- New Payment Proof from Website ---\n`;
             messageToAdmin += `User Name: ${name || 'N/A'}\n`;
@@ -145,10 +155,9 @@ module.exports = async (req, res) => {
             messageToAdmin += `Firebase Email: ${user_email || 'N/A'}\n`;
             messageToAdmin += `Membership Plan: ${membership_plan || 'N/A'}\n`;
             messageToAdmin += `Payment Method: ${payment_method || 'N/A'}\n`;
+            messageToAdmin += `Amount Paid: ${selected_currency || 'N/A'} ${selected_price || 'N/A'}\n`; // Include amount and currency
             messageToAdmin += `Ref ID / Details: ${refID || 'N/A'}\n`;
 
-            // FIX: Shorten callback_data to avoid BUTTON_DATA_INVALID error
-            // Format: ACTION_UID_PLAN (e.g., "APPROVE_ev8d84ACVqb1itpcpqfasQYJqBl2_1_MONTH")
             const approveData = `APPROVE_${user_firebase_uid}_${membership_plan}`;
             const rejectData = `REJECT_${user_firebase_uid}_${membership_plan}`;
 
@@ -161,25 +170,19 @@ module.exports = async (req, res) => {
                 ]
             };
 
-            try {
-                if (fileBuffer && fileMimeType) {
-                    // FIX: Pass reply_markup directly to sendPhoto
-                    await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename, inlineKeyboard);
-                    console.log(`[SUCCESS] Website payment proof (photo with buttons) sent to admin for UID: ${user_firebase_uid}`);
-                } else {
-                    // Send text message with buttons if no photo
-                    await bot.sendMessage(adminChatId, messageToAdmin, { reply_markup: inlineKeyboard });
-                    console.log(`[SUCCESS] Website payment proof (text-only with buttons) sent to admin for UID: ${user_firebase_uid}`);
-                }
-
-                res.status(200).json({ success: true, message: 'Payment proof received and forwarded.' });
-            } catch (error) {
-                console.error(`[ERROR] Failed to send payment proof to admin for UID ${user_firebase_uid}:`, error.response ? error.response.body : error.message);
-                res.status(500).json({ success: false, message: 'Failed to process payment proof.' });
+            if (fileBuffer && fileMimeType) {
+                await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename, inlineKeyboard);
+                console.log(`[SUCCESS] Website payment proof (photo with buttons) sent to admin for UID: ${user_firebase_uid}`);
+            } else {
+                await bot.sendMessage(adminChatId, messageToAdmin, { reply_markup: inlineKeyboard });
+                console.log(`[SUCCESS] Website payment proof (text-only with buttons) sent to admin for UID: ${user_firebase_uid}`);
             }
-        });
 
-        req.pipe(busboy);
+            res.status(200).json({ success: true, message: 'Payment proof received and forwarded.' });
+        } catch (error) {
+            console.error(`[ERROR] Failed to process payment proof from website for UID ${user_firebase_uid}:`, error.message, error.stack);
+            res.status(500).json({ success: false, message: 'Failed to process payment proof.' });
+        }
     }
     // --- Handle other methods (e.g., GET requests to the root webhook URL) ---
     else {
