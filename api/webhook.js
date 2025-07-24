@@ -36,7 +36,7 @@ const bot = new TelegramBot(token);
 async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename, reply_markup = {}) {
     let effectiveMimeType = mimeType;
     if (!effectiveMimeType || effectiveMimeType === 'application/octet-stream') {
-        const ext = path.extname(filename || '').toLowerCase();
+        const ext = path.extname(filename || '').toLowerCase(); // Ensure filename is a string for path.extname
         if (ext === '.png') {
             effectiveMimeType = 'image/png';
         } else if (ext === '.jpg' || ext === '.jpeg') {
@@ -44,7 +44,7 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
         } else if (ext === '.gif') {
             effectiveMimeType = 'image/gif';
         } else {
-            effectiveMimeType = 'application/octet-stream';
+            effectiveMimeType = 'application/octet-stream'; // Fallback for unknown
         }
     }
 
@@ -59,14 +59,14 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
         return await bot.sendPhoto(chatId, photoBuffer, { caption: caption, reply_markup: reply_markup }, fileOptions);
     } catch (error) {
         console.error(`[ERROR] Telegram sendPhoto failed:`, error.response ? error.response.body : error.message);
-        throw error;
+        throw error; // Re-throw to be caught by the main try/catch
     }
 }
 
 // Vercel's specific configuration to ensure raw body is available for busboy
 export const config = {
     api: {
-        bodyParser: false,
+        bodyParser: false, // Disable Vercel's default body parser
     },
 };
 
@@ -98,10 +98,15 @@ module.exports = async (req, res) => {
                 const firstName = msg.from.first_name || 'N/A';
                 const lastName = msg.from.last_name || 'N/A';
 
-                // Trim the message text to handle leading/trailing spaces for command recognition
+                // --- NEW DEBUGGING LOGS FOR COMMANDS ---
+                console.log(`[DEBUG_COMMAND] Raw msg.text: "${msg.text}"`);
                 const trimmedMessageText = msg.text ? msg.text.trim() : '';
+                console.log(`[DEBUG_COMMAND] Trimmed msg.text: "${trimmedMessageText}"`);
+                console.log(`[DEBUG_COMMAND] Starts with /free: ${trimmedMessageText.startsWith('/free')}`);
+                console.log(`[DEBUG_COMMAND] Starts with /pro: ${trimmedMessageText.startsWith('/pro')}`);
+                // --- END NEW DEBUGGING LOGS ---
 
-                // --- NEW: Handle /free and /pro video upload commands (HIGHEST PRIORITY) ---
+                // --- Handle /free and /pro video upload commands (HIGHEST PRIORITY) ---
                 if (trimmedMessageText.startsWith('/free') || trimmedMessageText.startsWith('/pro')) {
                     const lines = trimmedMessageText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
                     let title = '';
@@ -109,7 +114,6 @@ module.exports = async (req, res) => {
                     let thumbnailUrl = '';
                     const videoType = trimmedMessageText.startsWith('/free') ? 'free' : 'pro';
 
-                    // Ensure the command line itself is skipped when parsing fields
                     const contentLines = lines.slice(1); 
 
                     for (const line of contentLines) {
