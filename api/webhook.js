@@ -11,12 +11,13 @@ const adminChatId = process.env.adminchatid;
 const bot = new TelegramBot(token);
 
 // Function to send a photo to Telegram from a buffer
-async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename) {
+// Added reply_markup directly to sendPhoto options for cleaner message with buttons
+async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename, reply_markup = {}) {
     const fileOptions = {
-        filename: filename || 'payment_proof.png', // Use original filename or default
-        contentType: mimeType || 'image/png' // Use provided mimeType or default
+        filename: filename || 'payment_proof.png',
+        contentType: mimeType || 'image/png' // Fallback to image/png if mimetype is undefined
     };
-    return bot.sendPhoto(chatId, photoBuffer, { caption: caption }, fileOptions);
+    return bot.sendPhoto(chatId, photoBuffer, { caption: caption, reply_markup: reply_markup }, fileOptions);
 }
 
 // Vercel's specific configuration to ensure raw body is available for busboy
@@ -84,20 +85,13 @@ module.exports = async (req, res) => {
                 const data = callbackQuery.data; // This is the string from the button
 
                 console.log(`[INFO] Callback query received: ${data}`);
-                await bot.answerCallbackQuery(callbackQuery.id);
+                await bot.answerCallbackQuery(callbackQuery.id); // Acknowledge the callback
 
-                // Parse the data back into an object
-                let parsedData;
-                try {
-                    parsedData = JSON.parse(data);
-                } catch (e) {
-                    console.error("[ERROR] Failed to parse callback_data JSON:", e);
-                    await bot.sendMessage(adminChatId, `Error parsing button data: ${data}`);
-                    res.status(200).send('OK');
-                    return;
-                }
-
-                const { action, uid, plan } = parsedData;
+                // FIX: Parse the data using split('_') instead of JSON.parse()
+                const parts = data.split('_');
+                const action = parts[0];
+                const uid = parts[1];
+                const plan = parts.length > 2 ? parts.slice(2).join('_') : 'N/A'; // Handle multi-word plans
 
                 let responseMessage = '';
                 if (action === 'APPROVE') {
@@ -154,8 +148,7 @@ module.exports = async (req, res) => {
             messageToAdmin += `Ref ID / Details: ${refID || 'N/A'}\n`;
 
             // FIX: Shorten callback_data to avoid BUTTON_DATA_INVALID error
-            // Use a simpler string format, e.g., "APPROVE_UID_PLAN"
-            // Telegram callback_data limit is 64 bytes.
+            // Format: ACTION_UID_PLAN (e.g., "APPROVE_ev8d84ACVqb1itpcpqfasQYJqBl2_1_MONTH")
             const approveData = `APPROVE_${user_firebase_uid}_${membership_plan}`;
             const rejectData = `REJECT_${user_firebase_uid}_${membership_plan}`;
 
@@ -170,16 +163,13 @@ module.exports = async (req, res) => {
 
             try {
                 if (fileBuffer && fileMimeType) {
-                    // Send photo with caption and buttons
-                    await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename);
-                    // Send buttons in a separate message if photo was sent as Telegram doesn't allow reply_markup on photos easily
-                    // Or, for simplicity and to ensure buttons are always sent, we can send them in a follow-up message.
-                    await bot.sendMessage(adminChatId, 'Action:', { reply_markup: inlineKeyboard });
-                    console.log(`[SUCCESS] Website payment proof (photo) sent to admin for UID: ${user_firebase_uid}`);
+                    // FIX: Pass reply_markup directly to sendPhoto
+                    await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename, inlineKeyboard);
+                    console.log(`[SUCCESS] Website payment proof (photo with buttons) sent to admin for UID: ${user_firebase_uid}`);
                 } else {
                     // Send text message with buttons if no photo
                     await bot.sendMessage(adminChatId, messageToAdmin, { reply_markup: inlineKeyboard });
-                    console.log(`[SUCCESS] Website payment proof (text-only) sent to admin for UID: ${user_firebase_uid}`);
+                    console.log(`[SUCCESS] Website payment proof (text-only with buttons) sent to admin for UID: ${user_firebase_uid}`);
                 }
 
                 res.status(200).json({ success: true, message: 'Payment proof received and forwarded.' });
