@@ -9,7 +9,6 @@ const path = require('path');
 const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK if not already initialized
-// This uses the service account key stored as an environment variable in Vercel
 if (!admin.apps.length) {
     try {
         const serviceAccount = JSON.parse(process.env.FIREBASE_ADMIN_SDK_CONFIG);
@@ -37,7 +36,7 @@ const bot = new TelegramBot(token);
 async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename, reply_markup = {}) {
     let effectiveMimeType = mimeType;
     if (!effectiveMimeType || effectiveMimeType === 'application/octet-stream') {
-        const ext = path.extname(filename || '').toLowerCase(); // Ensure filename is a string for path.extname
+        const ext = path.extname(filename || '').toLowerCase();
         if (ext === '.png') {
             effectiveMimeType = 'image/png';
         } else if (ext === '.jpg' || ext === '.jpeg') {
@@ -45,7 +44,7 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
         } else if (ext === '.gif') {
             effectiveMimeType = 'image/gif';
         } else {
-            effectiveMimeType = 'application/octet-stream'; // Fallback for unknown
+            effectiveMimeType = 'application/octet-stream';
         }
     }
 
@@ -60,14 +59,14 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
         return await bot.sendPhoto(chatId, photoBuffer, { caption: caption, reply_markup: reply_markup }, fileOptions);
     } catch (error) {
         console.error(`[ERROR] Telegram sendPhoto failed:`, error.response ? error.response.body : error.message);
-        throw error; // Re-throw to be caught by the main try/catch
+        throw error;
     }
 }
 
 // Vercel's specific configuration to ensure raw body is available for busboy
 export const config = {
     api: {
-        bodyParser: false, // Disable Vercel's default body parser
+        bodyParser: false,
     },
 };
 
@@ -99,15 +98,21 @@ module.exports = async (req, res) => {
                 const firstName = msg.from.first_name || 'N/A';
                 const lastName = msg.from.last_name || 'N/A';
 
+                // Trim the message text to handle leading/trailing spaces for command recognition
+                const trimmedMessageText = msg.text ? msg.text.trim() : '';
+
                 // --- NEW: Handle /free and /pro video upload commands (HIGHEST PRIORITY) ---
-                if (msg.text && (msg.text.startsWith('/free') || msg.text.startsWith('/pro'))) {
-                    const lines = msg.text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+                if (trimmedMessageText.startsWith('/free') || trimmedMessageText.startsWith('/pro')) {
+                    const lines = trimmedMessageText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
                     let title = '';
                     let embedCode = '';
                     let thumbnailUrl = '';
-                    const videoType = msg.text.startsWith('/free') ? 'free' : 'pro';
+                    const videoType = trimmedMessageText.startsWith('/free') ? 'free' : 'pro';
 
-                    for (const line of lines) {
+                    // Ensure the command line itself is skipped when parsing fields
+                    const contentLines = lines.slice(1); 
+
+                    for (const line of contentLines) {
                         if (line.toLowerCase().startsWith('title:')) {
                             title = line.substring('title:'.length).trim();
                         } else if (line.toLowerCase().startsWith('video:')) {
@@ -124,7 +129,7 @@ module.exports = async (req, res) => {
                                 embedCode,
                                 thumbnailUrl,
                                 type: videoType,
-                                timestamp: admin.firestore.FieldValue.serverTimestamp() // Firestore timestamp
+                                timestamp: admin.firestore.FieldValue.serverTimestamp()
                             });
                             await bot.sendMessage(chatId, `Video "${title}" (${videoType}) uploaded successfully!`);
                             console.log(`[SUCCESS] Video uploaded: ${title} (${videoType})`);
@@ -137,7 +142,7 @@ module.exports = async (req, res) => {
                     }
                 } 
                 // --- Existing Telegram general message handling (if not a video command) ---
-                else if (msg.text || msg.photo) { // This handles any other text or photo messages from Telegram users
+                else if (msg.text || msg.photo) {
                     let messageToAdmin = `--- New Message from Telegram User ---\n`;
                     messageToAdmin += `User: ${userName} (Name: ${firstName} ${lastName})\n`;
 
@@ -145,7 +150,6 @@ module.exports = async (req, res) => {
                         messageToAdmin += `Message: "${msg.text}"`;
                         try {
                             await bot.sendMessage(adminChatId, messageToAdmin);
-                            // No automatic user reply for general messages to avoid spam/confusion
                             console.log(`[SUCCESS] Telegram general text message processed from ${userName} in chat ${chatId}`);
                         } catch (error) {
                             console.error(`[ERROR] Telegram general text message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
@@ -157,7 +161,6 @@ module.exports = async (req, res) => {
 
                         try {
                             await bot.sendPhoto(adminChatId, fileId, { caption: messageToAdmin });
-                            // No automatic user reply for general messages
                             console.log(`[SUCCESS] Telegram general photo message processed from ${userName} in chat ${chatId}`);
                         } catch (error) {
                             console.error(`[ERROR] Telegram general photo message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
