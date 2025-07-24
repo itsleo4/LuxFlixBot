@@ -5,7 +5,7 @@ const Busboy = require('busboy');
 const stream = require('stream');
 const path = require('path');
 
-// Firebase Admin SDK setup
+// Firebase Admin SDK setup - THIS IS CRITICAL AND MUST BE AT THE TOP
 const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -20,11 +20,13 @@ if (!admin.apps.length) {
         console.log('[INFO] Firebase Admin SDK initialized successfully.');
     } catch (error) {
         console.error('[ERROR] Failed to initialize Firebase Admin SDK:', error.message);
-        // Exit process or handle error appropriately
+        // If this fails, the function won't be able to interact with Firebase.
+        // In a production environment, you might want to throw the error or exit.
     }
 }
 
-const db = admin.firestore(); // Get Firestore instance
+// Get Firestore instance - THIS IS ALSO CRITICAL
+const db = admin.firestore();
 
 // Access the bot token and admin chat ID from Vercel's environment variables
 const token = process.env.bottken;
@@ -36,7 +38,7 @@ const bot = new TelegramBot(token);
 async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filename, reply_markup = {}) {
     let effectiveMimeType = mimeType;
     if (!effectiveMimeType || effectiveMimeType === 'application/octet-stream') {
-        const ext = path.extname(filename || '').toLowerCase(); // Ensure filename is a string for path.extname
+        const ext = path.extname(filename || '').toLowerCase();
         if (ext === '.png') {
             effectiveMimeType = 'image/png';
         } else if (ext === '.jpg' || ext === '.jpeg') {
@@ -44,7 +46,7 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
         } else if (ext === '.gif') {
             effectiveMimeType = 'image/gif';
         } else {
-            effectiveMimeType = 'application/octet-stream'; // Fallback for unknown
+            effectiveMimeType = 'application/octet-stream';
         }
     }
 
@@ -59,14 +61,14 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
         return await bot.sendPhoto(chatId, photoBuffer, { caption: caption, reply_markup: reply_markup }, fileOptions);
     } catch (error) {
         console.error(`[ERROR] Telegram sendPhoto failed:`, error.response ? error.response.body : error.message);
-        throw error; // Re-throw to be caught by the main try/catch
+        throw error;
     }
 }
 
 // Vercel's specific configuration to ensure raw body is available for busboy
 export const config = {
     api: {
-        bodyParser: false, // Disable Vercel's default body parser
+        bodyParser: false,
     },
 };
 
