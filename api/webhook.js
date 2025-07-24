@@ -5,7 +5,7 @@ const Busboy = require('busboy');
 const stream = require('stream');
 const path = require('path');
 
-// Firebase Admin SDK setup - THIS IS CRITICAL AND MUST BE AT THE TOP
+// Firebase Admin SDK setup (ONLY for custom claims on Approve/Reject)
 const admin = require('firebase-admin');
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -14,19 +14,13 @@ if (!admin.apps.length) {
         const serviceAccount = JSON.parse(process.env.FIREBASE_ADMIN_SDK_CONFIG);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount),
-            // You might need to add your databaseURL if using Realtime Database
-            // databaseURL: "https://YOUR_PROJECT_ID.firebaseio.com" // Uncomment and set if needed
+            // No databaseURL needed if only using Auth and not Firestore directly here
         });
-        console.log('[INFO] Firebase Admin SDK initialized successfully.');
+        console.log('[INFO] Firebase Admin SDK initialized for Auth claims.');
     } catch (error) {
-        console.error('[ERROR] Failed to initialize Firebase Admin SDK:', error.message);
-        // If this fails, the function won't be able to interact with Firebase.
-        // In a production environment, you might want to throw the error or exit.
+        console.error('[ERROR] Failed to initialize Firebase Admin SDK for Auth claims:', error.message);
     }
 }
-
-// Get Firestore instance - THIS IS ALSO CRITICAL
-const db = admin.firestore();
 
 // Access the bot token and admin chat ID from Vercel's environment variables
 const token = process.env.bottken;
@@ -100,77 +94,28 @@ module.exports = async (req, res) => {
                 const firstName = msg.from.first_name || 'N/A';
                 const lastName = msg.from.last_name || 'N/A';
 
-                // --- NEW DEBUGGING LOGS FOR COMMANDS ---
-                console.log(`[DEBUG_COMMAND] Raw msg.text: "${msg.text}"`);
-                const trimmedMessageText = msg.text ? msg.text.trim() : '';
-                console.log(`[DEBUG_COMMAND] Trimmed msg.text: "${trimmedMessageText}"`);
-                console.log(`[DEBUG_COMMAND] Starts with /free: ${trimmedMessageText.startsWith('/free')}`);
-                console.log(`[DEBUG_COMMAND] Starts with /pro: ${trimmedMessageText.startsWith('/pro')}`);
-                // --- END NEW DEBUGGING LOGS ---
+                // --- Existing Telegram general message handling (any message from Telegram user) ---
+                let messageToAdmin = `--- New Message from Telegram User ---\n`;
+                messageToAdmin += `User: ${userName} (Name: ${firstName} ${lastName})\n`;
 
-                // --- Handle /free and /pro video upload commands (HIGHEST PRIORITY) ---
-                if (trimmedMessageText.startsWith('/free') || trimmedMessageText.startsWith('/pro')) {
-                    const lines = trimmedMessageText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-                    let title = '';
-                    let embedCode = '';
-                    let thumbnailUrl = '';
-                    const videoType = trimmedMessageText.startsWith('/free') ? 'free' : 'pro';
-
-                    const contentLines = lines.slice(1); 
-
-                    for (const line of contentLines) {
-                        if (line.toLowerCase().startsWith('title:')) {
-                            title = line.substring('title:'.length).trim();
-                        } else if (line.toLowerCase().startsWith('video:')) {
-                            embedCode = line.substring('video:'.length).trim();
-                        } else if (line.toLowerCase().startsWith('thumb:')) {
-                            thumbnailUrl = line.substring('thumb:'.length).trim();
-                        }
+                if (msg.text) {
+                    messageToAdmin += `Message: "${msg.text}"`;
+                    try {
+                        await bot.sendMessage(adminChatId, messageToAdmin);
+                        console.log(`[SUCCESS] Telegram general text message processed from ${userName} in chat ${chatId}`);
+                    } catch (error) {
+                        console.error(`[ERROR] Telegram general text message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
                     }
+                } else if (msg.photo) {
+                    const fileId = msg.photo[msg.photo.length - 1].file_id;
+                    const caption = msg.caption ? `\nCaption: "${msg.caption}"` : '';
+                    messageToAdmin += ` (Photo Message)${caption}`;
 
-                    if (title && embedCode && thumbnailUrl) {
-                        try {
-                            await db.collection('videos').add({
-                                title,
-                                embedCode,
-                                thumbnailUrl,
-                                type: videoType,
-                                timestamp: admin.firestore.FieldValue.serverTimestamp()
-                            });
-                            await bot.sendMessage(chatId, `Video "${title}" (${videoType}) uploaded successfully!`);
-                            console.log(`[SUCCESS] Video uploaded: ${title} (${videoType})`);
-                        } catch (error) {
-                            console.error(`[ERROR] Failed to upload video to Firestore:`, error.message);
-                            await bot.sendMessage(chatId, `Failed to upload video: ${error.message}`);
-                        }
-                    } else {
-                        await bot.sendMessage(chatId, 'Please provide title, video embed code, and thumbnail URL in the format:\n\n/free (or /pro)\ntitle: Your Video Title\nvideo: <iframe src="..."></iframe>\nthumb: https://example.com/thumbnail.jpg');
-                    }
-                } 
-                // --- Existing Telegram general message handling (if not a video command) ---
-                else if (msg.text || msg.photo) {
-                    let messageToAdmin = `--- New Message from Telegram User ---\n`;
-                    messageToAdmin += `User: ${userName} (Name: ${firstName} ${lastName})\n`;
-
-                    if (msg.text) {
-                        messageToAdmin += `Message: "${msg.text}"`;
-                        try {
-                            await bot.sendMessage(adminChatId, messageToAdmin);
-                            console.log(`[SUCCESS] Telegram general text message processed from ${userName} in chat ${chatId}`);
-                        } catch (error) {
-                            console.error(`[ERROR] Telegram general text message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
-                        }
-                    } else if (msg.photo) {
-                        const fileId = msg.photo[msg.photo.length - 1].file_id;
-                        const caption = msg.caption ? `\nCaption: "${msg.caption}"` : '';
-                        messageToAdmin += ` (Photo Message)${caption}`;
-
-                        try {
-                            await bot.sendPhoto(adminChatId, fileId, { caption: messageToAdmin });
-                            console.log(`[SUCCESS] Telegram general photo message processed from ${userName} in chat ${chatId}`);
-                        } catch (error) {
-                            console.error(`[ERROR] Telegram general photo message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
-                        }
+                    try {
+                        await bot.sendPhoto(adminChatId, fileId, { caption: messageToAdmin });
+                        console.log(`[SUCCESS] Telegram general photo message processed from ${userName} in chat ${chatId}`);
+                    } catch (error) {
+                        console.error(`[ERROR] Telegram general photo message error from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
                     }
                 }
             } else if (body.callback_query) {
