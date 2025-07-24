@@ -1,25 +1,25 @@
 {
   "name": "luxflixbot",
   "version": "1.0.0",
-  "description": "Telegram bot for LuxFlix",
+  "description": "",
   "main": "index.js",
-  "type": "module",
   "scripts": {
-    "start": "node index.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "dotenv": "^17.2.0",
-    "node-telegram-bot-api": "^0.66.0"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/itsleo4/LuxFlixBot.git"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
   "bugs": {
     "url": "https://github.com/itsleo4/LuxFlixBot/issues"
   },
-  "homepage": "https://github.com/itsleo4/LuxFlixBot#readme"
+  "homepage": "https://github.com/itsleo4/LuxFlixBot#readme",
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "node-telegram-bot-api": "^0.66.0"
   }
+}
