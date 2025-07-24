@@ -5,8 +5,10 @@ const Busboy = require('busboy');
 const stream = require('stream');
 const path = require('path');
 
-// Firebase Admin SDK setup - RESTORED for custom claims
+// Firebase Admin SDK setup - RESTORED with robust initialization
 const admin = require('firebase-admin');
+
+let firebaseAdminInitialized = false; // Flag to track initialization status
 
 // Initialize Firebase Admin SDK if not already initialized
 if (!admin.apps.length) {
@@ -16,13 +18,19 @@ if (!admin.apps.length) {
             credential: admin.credential.cert(serviceAccount),
             // No databaseURL needed if only using Auth. If you add Firestore later, you might need it.
         });
+        firebaseAdminInitialized = true; // Set flag to true on success
         console.log('[INFO] Firebase Admin SDK initialized for Auth claims.');
     } catch (error) {
-        console.error('[ERROR] Failed to initialize Firebase Admin SDK for Auth claims:', error.message);
-        // This error will be logged, but the function should still proceed to process other requests.
-        // Custom claims won't be set if this initialization fails.
+        // CRITICAL: Log this error explicitly if initialization fails
+        console.error('[ERROR] Failed to initialize Firebase Admin SDK for Auth claims:', error.message, error.stack);
+        firebaseAdminInitialized = false; // Ensure flag is false on failure
+        // The function will continue to run, but custom claims won't be set.
     }
+} else {
+    firebaseAdminInitialized = true; // Already initialized from a previous invocation
+    console.log('[INFO] Firebase Admin SDK already initialized.');
 }
+
 
 // Access the bot token and admin chat ID from Vercel's environment variables
 const token = process.env.bottken;
@@ -136,10 +144,9 @@ module.exports = async (req, res) => {
                 let responseMessage = '';
                 if (action === 'APPROVE') {
                     responseMessage = `✅ Approved membership for UID: ${uid} (Plan: ${plan})`;
-                    // Reintroduced Firebase Admin SDK call here
+                    // Reintroduced Firebase Admin SDK call here with check
                     try {
-                        // Check if admin is initialized before attempting to set claims
-                        if (admin.apps.length > 0) {
+                        if (firebaseAdminInitialized) { // Check the flag
                             await admin.auth().setCustomUserClaims(uid, { isPro: true, membershipPlan: plan });
                             responseMessage += `\nUser ${uid} marked as PRO in Firebase.`;
                             console.log(`[SUCCESS] User ${uid} set as PRO with plan ${plan}`);
@@ -153,9 +160,9 @@ module.exports = async (req, res) => {
                     }
                 } else if (action === 'REJECT') {
                     responseMessage = `❌ Rejected membership for UID: ${uid} (Plan: ${plan})`;
-                    // Reintroduced Firebase Admin SDK call here
+                    // Reintroduced Firebase Admin SDK call here with check
                     try {
-                        if (admin.apps.length > 0) {
+                        if (firebaseAdminInitialized) { // Check the flag
                             await admin.auth().setCustomUserClaims(uid, { isPro: false, membershipPlan: null }); // Remove pro status
                             responseMessage += `\nUser ${uid} marked as NON-PRO in Firebase.`;
                             console.log(`[SUCCESS] User ${uid} set as NON-PRO`);
