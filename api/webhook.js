@@ -20,7 +20,6 @@ async function sendPhotoFromBuffer(chatId, photoBuffer, caption, mimeType, filen
 }
 
 // Vercel's specific configuration to ensure raw body is available for busboy
-// This is critical for multipart/form-data parsing
 export const config = {
     api: {
         bodyParser: false, // Disable Vercel's default body parser
@@ -29,15 +28,13 @@ export const config = {
 
 module.exports = async (req, res) => {
     // --- CORS Headers ---
-    // Allow requests from your GitHub Pages domain
     res.setHeader('Access-Control-Allow-Origin', 'https://itsleo4.github.io');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS'); // Allow POST and OPTIONS methods
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); // Allow Content-Type header
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    // Handle preflight OPTIONS request (sent by browser before actual POST for CORS)
     if (req.method === 'OPTIONS') {
         console.log('[INFO] Received OPTIONS (CORS preflight) request.');
-        res.status(200).end(); // Respond with 200 OK for preflight
+        res.status(200).end();
         return;
     }
 
@@ -84,11 +81,36 @@ module.exports = async (req, res) => {
             } else if (body.callback_query) {
                 const callbackQuery = body.callback_query;
                 const message = callbackQuery.message;
-                const data = callbackQuery.data;
+                const data = callbackQuery.data; // This is the string from the button
 
                 console.log(`[INFO] Callback query received: ${data}`);
                 await bot.answerCallbackQuery(callbackQuery.id);
-                await bot.sendMessage(adminChatId, `Admin clicked: ${data}`);
+
+                // Parse the data back into an object
+                let parsedData;
+                try {
+                    parsedData = JSON.parse(data);
+                } catch (e) {
+                    console.error("[ERROR] Failed to parse callback_data JSON:", e);
+                    await bot.sendMessage(adminChatId, `Error parsing button data: ${data}`);
+                    res.status(200).send('OK');
+                    return;
+                }
+
+                const { action, uid, plan } = parsedData;
+
+                let responseMessage = '';
+                if (action === 'APPROVE') {
+                    responseMessage = `✅ Approved membership for UID: ${uid} (Plan: ${plan})`;
+                    // TODO: Add Firebase Admin SDK logic here to update user's membership
+                } else if (action === 'REJECT') {
+                    responseMessage = `❌ Rejected membership for UID: ${uid} (Plan: ${plan})`;
+                    // TODO: Add Firebase Admin SDK logic here to update user's membership (or notify them)
+                } else {
+                    responseMessage = `Unknown action: ${action}`;
+                }
+
+                await bot.sendMessage(adminChatId, responseMessage);
             }
         }
         res.status(200).send('OK');
@@ -106,7 +128,7 @@ module.exports = async (req, res) => {
         busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
             console.log(`[INFO] File received: ${fieldname} - ${filename} (${mimetype})`);
             originalFilename = filename;
-            fileMimeType = mimetype;
+            fileMimeType = mimetype; // Capture the mimetype here
             const chunks = [];
             file.on('data', chunk => chunks.push(chunk));
             file.on('end', () => {
@@ -131,27 +153,34 @@ module.exports = async (req, res) => {
             messageToAdmin += `Payment Method: ${payment_method || 'N/A'}\n`;
             messageToAdmin += `Ref ID / Details: ${refID || 'N/A'}\n`;
 
+            // FIX: Shorten callback_data to avoid BUTTON_DATA_INVALID error
+            // Use a simpler string format, e.g., "APPROVE_UID_PLAN"
+            // Telegram callback_data limit is 64 bytes.
+            const approveData = `APPROVE_${user_firebase_uid}_${membership_plan}`;
+            const rejectData = `REJECT_${user_firebase_uid}_${membership_plan}`;
+
             const inlineKeyboard = {
                 inline_keyboard: [
                     [
-                        { text: '✅ Approve', callback_data: JSON.stringify({ action: 'APPROVE', uid: user_firebase_uid, plan: membership_plan }) },
-                        { text: '❌ Reject', callback_data: JSON.stringify({ action: 'REJECT', uid: user_firebase_uid, plan: membership_plan }) }
+                        { text: '✅ Approve', callback_data: approveData },
+                        { text: '❌ Reject', callback_data: rejectData }
                     ],
                 ]
             };
 
             try {
                 if (fileBuffer && fileMimeType) {
+                    // Send photo with caption and buttons
                     await sendPhotoFromBuffer(adminChatId, fileBuffer, messageToAdmin, fileMimeType, originalFilename);
+                    // Send buttons in a separate message if photo was sent as Telegram doesn't allow reply_markup on photos easily
+                    // Or, for simplicity and to ensure buttons are always sent, we can send them in a follow-up message.
+                    await bot.sendMessage(adminChatId, 'Action:', { reply_markup: inlineKeyboard });
                     console.log(`[SUCCESS] Website payment proof (photo) sent to admin for UID: ${user_firebase_uid}`);
                 } else {
-                    await bot.sendMessage(adminChatId, messageToAdmin); // Send as text if no photo
+                    // Send text message with buttons if no photo
+                    await bot.sendMessage(adminChatId, messageToAdmin, { reply_markup: inlineKeyboard });
                     console.log(`[SUCCESS] Website payment proof (text-only) sent to admin for UID: ${user_firebase_uid}`);
                 }
-
-                // Send the message with inline keyboard to admin
-                // This is sent separately if a photo was sent above, or as the main message if no photo.
-                await bot.sendMessage(adminChatId, 'Action:', { reply_markup: inlineKeyboard });
 
                 res.status(200).json({ success: true, message: 'Payment proof received and forwarded.' });
             } catch (error) {
