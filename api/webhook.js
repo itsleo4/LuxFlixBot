@@ -2,11 +2,16 @@
 
 const TelegramBot = require('node-telegram-bot-api');
 
-const token = process.env.BOT_TOKEN;
-const adminChatId = process.env.ADMIN_CHAT_ID;
+// Access the bot token and admin chat ID from Vercel's environment variables
+// *** THESE LINES ARE THE CRITICAL CHANGE ***
+const token = process.env.bottken;    // Changed to match your Vercel screenshot
+const adminChatId = process.env.adminchatid; // Changed to match your Vercel screenshot
 
+// Create a new bot instance, but WITHOUT polling
 const bot = new TelegramBot(token);
 
+// This is the Vercel (or serverless function) entry point
+// It handles the incoming HTTP POST request from Telegram
 module.exports = async (req, res) => {
     if (req.method === 'POST') {
         const { body } = req;
@@ -28,9 +33,9 @@ module.exports = async (req, res) => {
                     try {
                         await bot.sendMessage(adminChatId, messageToAdmin);
                         await bot.sendMessage(chatId, 'Thank you for submitting your payment proof! We will verify it soon and update your membership.');
-                        console.log(`[SUCCESS] Text message processed from ${userName} in chat ${chatId}`); // Success log
+                        console.log(`[SUCCESS] Text message processed from ${userName} in chat ${chatId}`);
                     } catch (error) {
-                        console.error(`[ERROR] FatalError processing text message from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message); // Detailed error log
+                        console.error(`[ERROR] FatalError processing text message from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
                     }
                 }
                 // Handle photo message
@@ -42,9 +47,9 @@ module.exports = async (req, res) => {
                     try {
                         await bot.sendPhoto(adminChatId, fileId, { caption: messageToAdmin });
                         await bot.sendMessage(chatId, 'Thank you for submitting your payment proof! We will verify it soon and update your membership.');
-                        console.log(`[SUCCESS] Photo message processed from ${userName} in chat ${chatId}`); // Success log
+                        console.log(`[SUCCESS] Photo message processed from ${userName} in chat ${chatId}`);
                     } catch (error) {
-                        console.error(`[ERROR] FatalError processing photo message from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message); // Detailed error log
+                        console.error(`[ERROR] FatalError processing photo message from ${userName} in chat ${chatId}:`, error.response ? error.response.body : error.message);
                     }
                 }
             }
